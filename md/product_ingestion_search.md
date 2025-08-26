@@ -1,5 +1,5 @@
 # Name: Product Ingestion Search
-### Versão: 1.0.2
+### Versão: 1.0.4
 
 
 ## Regras
@@ -10,7 +10,7 @@ A consulta retornará os dados agrupados pelo nome do produto. Você deve retorn
 
 **query:**
 ```
-select name.value, count(distinct ingestion_id) qtd from groceries_ops_ingestion_catalog.product_ingestion where sku = :barcode and validity_end_date > current_date() group by name.Value
+select name.value, count(distinct ingestion_id) qtd from groceries_ops_ingestion_catalog.product_ingestion where sku = :barcode and validity_end_date > current_date() group by name.Value order by qtd desc limit 5
 ```
 
 **response:** 

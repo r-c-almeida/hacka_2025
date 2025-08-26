@@ -1,5 +1,5 @@
 # Name: GS1 Search
-### Versão: 1.0.0
+### Versão: 1.0.2
 
 
 ## Regras
@@ -10,13 +10,14 @@
 * Caso o produto seja encontrado na base do GS1 através do select abaixo, devemos iniciar a busca dos dados do produto através do nome que foi encontrado na base.
 * Se o produto não for encontrado na base do GS1 ou estiver com status inválido, devemos retornar o json com todos os campos nulos.
 * Crie um json contendo todos os campos da tabela e mantendo o tipo de dados de cada um deles.
+* O Campo data possui todas as informações do produto, baseie-se nele
 
 **query:**
 ```
-SELECT 
-  *
+SELECT   *
 FROM groceries_ops_assortment.gs1_products
-WHERE fixed_gtin = LPAD(:barcode, 14, '0');
+WHERE fixed_gtin = LPAD(:product_ean, 14, '0');
+
 ```
 
 **response:** 
