@@ -1,0 +1,47 @@
+{
+  "ean": "7891234567890",
+  "ean_confirmed": true,
+  "status": {
+    "icon": "🟡",
+    "message": "produto possui 2 divergências não sensíveis"
+  },
+  "summary": "Diferenças encontradas em descrição e cubagem; nome e marca confirmados.",
+  "comparative_table": [
+    {
+      "field": "product_name",
+      "ifood": "Arroz Branco 1kg",
+      "gs1": "Arroz Tipo 1 1kg",
+      "internet": [{"source": "Site Marca X", "value": "Arroz Branco Tipo 1 1kg"}],
+      "changed": true,
+      "suggestion": "Arroz Branco Tipo 1 1kg",
+      "explanation": "Web e GS1 convergiram para versão mais completa.",
+      "sources": ["GS1", "Site Marca X"]
+    },
+    {
+      "field": "cubage",
+      "ifood": "1kg",
+      "gs1": "900g",
+      "internet": [{"source": "Distribuidor Y", "value": "1kg"}],
+      "changed": false,
+      "suggestion": "1kg",
+      "explanation": "Internet majoritariamente confirma valor iFood.",
+      "sources": ["Distribuidor Y"]
+    }
+  ],
+  "is_multipack": {
+    "value": "Sim",
+    "evidence": [
+      "Descrição GS1 indica caixa com 10 unidades.",
+      "Marketplace Z lista o mesmo EAN como pack de 10."
+    ],
+    "confidence": "alta"
+  },
+  "final_suggestions": {
+    "product_name": "Arroz Branco Tipo 1 1kg"
+  },
+  "notes": [
+    "Apenas divergências relevantes foram sugeridas.",
+    "Fontes não confiáveis foram ignoradas.",
+    "is_multipack é campo calculado, não fornecido nas bases oficiais."
+  ]
+}
