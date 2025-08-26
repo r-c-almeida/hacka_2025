@@ -1,0 +1,14 @@
+# macOS Finder
+.DS_Store
+
+# Environment files
+.env
+
+# =========================
+# Output / build artifacts
+# =========================
+# Default output created by toqan/agent.py (outputs/<timestamp>) at repo root
+outputs/
+
+# Any nested "outputs" folders inside subprojects
+**/outputs/
