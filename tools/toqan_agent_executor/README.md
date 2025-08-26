@@ -37,7 +37,7 @@ TOQAN_API_KEY=sk_xxx...
 DATABRICKS_HOST=https://dbc-xxxx.cloud.databricks.com
 DATABRICKS_TOKEN=dapi_xxx...
 DATABRICKS_WAREHOUSE_ID=xxxx-xxxx-xxxx
-DATABRICKS_TABLE=groceries_sandbox.enriquece_agents_results
+DATABRICKS_TABLE=groceries_sandbox.toqan_answers
 ```
 
 > O script tenta carregar o `.env` automaticamente ao iniciar (se `python-dotenv` estiver instalado).
