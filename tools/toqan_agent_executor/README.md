@@ -2,11 +2,6 @@
 
 Um **worker assíncrono** para processar uma lista de *inputs* (primeira coluna de um CSV), enviar cada item para a API do Toqan, **aguardar a resposta via polling** e salvar um JSON por item. Opcionalmente, o script **consolida os JSONs em um CSV** e **persiste os resultados no Databricks** via SQL Statements API.
 
-> Existem dois arquivos idênticos neste projeto (com o mesmo conteúdo):  
-> - `PS/toqan/agent.py`  
-> - `hacka_2025/tools/toqan_agent_executor/agent.py`  
-> As instruções abaixo valem para ambos.
-
 ---
 
 ## Requisitos
@@ -47,7 +42,6 @@ DATABRICKS_TABLE=groceries_sandbox.toqan_answers
 ## Entrada (CSV)
 
 - O script lê **apenas a primeira coluna** do CSV informado em `--csv`.
-- Pode ter cabeçalho ou não.
 - Cada linha é um *input* a ser enviado à API.
 - O script **reescreve** o CSV para manter **apenas os itens pendentes** (*à prova de quedas*).
 
@@ -141,7 +135,7 @@ python agent.py \
   --csv toqan/input.csv \
   --api-key "$TOQAN_API_KEY" \
   --dbricks \
-  --dbricks-table groceries_sandbox.enriquece_agents_results
+  --dbricks-table groceries_sandbox.toqan_answers
 ```
 
 Ou especificando tudo na linha de comando:
@@ -154,7 +148,7 @@ python agent.py \
   --dbricks-host "https://dbc-xxxx.cloud.databricks.com" \
   --dbricks-token "$DATABRICKS_TOKEN" \
   --dbricks-warehouse-id "$DATABRICKS_WAREHOUSE_ID" \
-  --dbricks-table "groceries_sandbox.enriquece_agents_results" \
+  --dbricks-table "groceries_sandbox.toqan_answers" \
   --dbricks-batch-size 1000
 ```
 
@@ -185,9 +179,3 @@ python agent.py \
 - **`Defina --api-key...`** → garanta `TOQAN_API_KEY` no `.env` ou passe `--api-key`.
 - **Databricks faltando parâmetros** → use `.env` com `DATABRICKS_*` ou passe todos os `--dbricks-*`.
 - **Timeouts/429** → reduza `--concurrency`, aumente `--poll-interval` ou rode novamente (*idempotente* graças ao *skip*).
-
----
-
-## Licença
-
-Uso interno / educacional. Adapte conforme necessário.
