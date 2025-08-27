@@ -11,9 +11,17 @@ import subprocess
 import re
 import hashlib
 import textwrap
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Any
+
+# ------------------------------
+# Databricks debug flag and logger
+# ------------------------------
+DBRICKS_DEBUG = False
+def dbg(msg: str):
+    if DBRICKS_DEBUG:
+        print(f"[DBRICKS][DEBUG] {msg}")
 
 API_BASE = "https://api.coco.prod.toqan.ai/api"
 
@@ -40,20 +48,25 @@ def load_inputs(csv_path: Path) -> List[str]:
                 inputs.append(val)
     return inputs
 
-def atomic_write_csv(path: Path, fieldnames: List[str], rows: List[Dict[str, str]]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in rows:
-            writer.writerow(r)
-    tmp.replace(path)
 
 def rewrite_pending_csv(csv_path: Path, all_rows: List[Dict[str, str]], pending_inputs: set) -> None:
-    # Mantém apenas Inputs pendentes
-    fieldnames = list(all_rows[0].keys()) if all_rows else ["input"]
-    remaining_rows = [r for r in all_rows if (r.get("input") or "").strip() in pending_inputs]
-    atomic_write_csv(csv_path, fieldnames, remaining_rows)
+    """
+    Reescreve o CSV mantendo apenas os inputs pendentes, sem cabeçalho e com
+    apenas uma coluna (valor bruto), pois o arquivo original não possui header.
+    """
+    # Extrai a lista (na mesma ordem do arquivo original) dos valores ainda pendentes
+    remaining_inputs: List[str] = []
+    for r in all_rows:
+        val = (r.get("input") or "").strip()
+        if val and val in pending_inputs:
+            remaining_inputs.append(val)
+
+    tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        for v in remaining_inputs:
+            writer.writerow([v])
+    tmp.replace(csv_path)
 
 def escape_json_for_sql(value):
     try:
@@ -136,7 +149,11 @@ def consolidate_answers(indir: Path, out_csv: Path, pattern: str = "*.json", sep
 
         flat = flatten(parsed, sep=sep) if isinstance(parsed, dict) else {}
         flat["__source_file"] = str(fp)
-        flat["__ean_from_filename"] = fp.stem
+        # Drop hash suffix from filename (Databricks rule)
+        stem = fp.stem
+        m = re.match(r"^(.*)_[0-9a-fA-F]{8}$", stem)
+        input_nohash = m.group(1) if m else stem
+        flat["__ean_from_filename"] = input_nohash
         rows.append(flat)
         all_keys.update(flat.keys())
 
@@ -161,6 +178,105 @@ def consolidate_answers(indir: Path, out_csv: Path, pattern: str = "*.json", sep
 #   "created_at": str (timestamp),
 #   "agent": str
 # }
+
+# --- Databricks helpers ---
+def _parse_schema_table(ident: str) -> Dict[str, str]:
+    ident = (ident or "").strip()
+    parts = ident.split(".")
+    if len(parts) == 3:
+        catalog, schema, table = parts
+        return {"catalog": catalog.strip(), "schema": schema.strip(), "table": table.strip(), "full": f"{catalog.strip()}.{schema.strip()}.{table.strip()}"}
+    elif len(parts) == 2:
+        schema, table = parts
+        schema = schema.strip()
+        table = table.strip()
+        return {"catalog": "main", "schema": schema, "table": table, "full": f"main.{schema}.{table}"}
+    else:
+        # fallback para nome simples -> main.<ident>
+        ident = ident.strip()
+        return {"catalog": "main", "schema": "main", "table": ident, "full": f"main.main.{ident}"}
+
+async def dbricks_exec_sql(session: aiohttp.ClientSession, host: str, token: str, warehouse_id: str, sql: str, catalog: str = "", schema: str = "", poll_interval: float = 2.0, max_poll_attempts: int = 60) -> Dict:
+    api_base = host.rstrip("/") + "/api/2.0/sql/statements"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {"statement": textwrap.dedent(sql), "warehouse_id": warehouse_id}
+    if catalog:
+        payload["catalog"] = catalog
+    if schema:
+        payload["schema"] = schema
+    # Debug logs before submit
+    dbg(f"Warehouse: {warehouse_id} | Catalog: {catalog or '(default)'} | Schema: {schema or '(default)'}")
+    dbg(f"Endpoint: {api_base}")
+    try:
+        sql_trim = textwrap.dedent(sql).strip()
+        dbg(f"SQL ({len(sql_trim)} chars): {sql_trim[:1200]}{' ...[truncado]' if len(sql_trim) > 1200 else ''}")
+    except Exception:
+        pass
+    dbg(f"Payload keys: {list(payload.keys())}")
+    # Submit
+    async with session.post(api_base, headers=headers, json=payload, timeout=120) as resp:
+        status_code = resp.status
+        text_body = await resp.text()
+        dbg(f"POST status={status_code}, body_len={len(text_body)}")
+        try:
+            result = json.loads(text_body)
+        except Exception:
+            result = {"raw_text": text_body, "status_code": status_code}
+        if status_code >= 400:
+            return {"status": {"state": "FAILED", "error": {"message": f"HTTP {status_code}", "details": text_body}}, "status_code": status_code}
+    state = (result.get("status", {}) or {}).get("state")
+    if state in ("SUCCEEDED", "FAILED"):
+        return result
+    statement_id = result.get("statement_id")
+    poll_result = result
+    for _ in range(max_poll_attempts):
+        await asyncio.sleep(poll_interval)
+        dbg(f"Polling {api_base}/{statement_id}")
+        async with session.get(f"{api_base}/{statement_id}", headers=headers, timeout=120) as poll_resp:
+            poll_result = await poll_resp.json()
+        dbg(f"Poll state={ (poll_result.get('status', {}) or {}).get('state') }")
+        state = (poll_result.get("status", {}) or {}).get("state")
+        if state not in ("PENDING", "RUNNING"):
+            break
+    return poll_result
+
+async def dbricks_ensure_table_exists(session: aiohttp.ClientSession, host: str, token: str, warehouse_id: str, table_ident: str) -> None:
+    parts = _parse_schema_table(table_ident)
+    full = parts["full"]
+    catalog = parts.get("catalog", "")
+
+    # cria schema se não existir
+    if catalog:
+        create_schema_sql = f"CREATE SCHEMA IF NOT EXISTS {catalog}.{parts['schema']}"
+        dbg(f"CREATE SCHEMA SQL: {create_schema_sql}")
+        await dbricks_exec_sql(session, host, token, warehouse_id, create_schema_sql, catalog=catalog, schema=parts["schema"])
+    else:
+        create_schema_sql = f"CREATE SCHEMA IF NOT EXISTS {parts['schema']}"
+        dbg(f"CREATE SCHEMA SQL: {create_schema_sql}")
+        await dbricks_exec_sql(session, host, token, warehouse_id, create_schema_sql, schema=parts["schema"])
+
+    # cria tabela se não existir (Delta)
+    create_table_sql = f"""
+    CREATE TABLE IF NOT EXISTS {full} (
+        input STRING,
+        answer STRING,
+        created_at TIMESTAMP,
+        agent STRING
+    ) USING DELTA
+    """
+    dbg(f"CREATE TABLE SQL for {full}: {create_table_sql.strip()[:800]}{' ...[truncado]' if len(create_table_sql) > 800 else ''}")
+    res = await dbricks_exec_sql(session, host, token, warehouse_id, create_table_sql, catalog=catalog, schema=parts["schema"])
+    state = (res.get("status", {}) or {}).get("state")
+    if state != "SUCCEEDED":
+        msg = (res.get("status", {}).get("error", {}) or {}).get("message", "Erro ao garantir tabela")
+        details = (res.get("status", {}).get("error", {}) or {}).get("details", "")
+        print(f"❌ [Databricks] Falha ao garantir tabela {full}: {msg}. {details[:300]}", file=sys.stderr)
+        return
+    print(f"✅ [Databricks] Tabela garantida: {full}")
+
 async def dbricks_merge_rows(session: aiohttp.ClientSession, host: str, token: str, warehouse_id: str, table: str, rows: List[Dict[str, str]], batch_size: int = 1000, poll_interval: float = 2.0, max_poll_attempts: int = 60) -> None:
     if not rows:
         return
@@ -169,9 +285,20 @@ async def dbricks_merge_rows(session: aiohttp.ClientSession, host: str, token: s
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    parts = _parse_schema_table(table)
+    catalog = parts.get("catalog", "")
+    schema = parts["schema"]
+    full_table = parts["full"]
+    dbg(f"MERGE target: {full_table} | Catalog: {catalog or '(default)'} | Schema: {schema}")
+    dbg(f"Total rows to send: {len(rows)} | Batch size: {batch_size}")
     # Envia em sublotes
     for i in range(0, len(rows), batch_size):
         sub = rows[i:i+batch_size]
+        dbg(f"Batch rows: {len(sub)} (idx {i}-{i+len(sub)-1})")
+        if sub:
+            sample = sub[0].copy()
+            sample["answer"] = "<json omitted>"
+            dbg(f"Sample row: {sample}")
         values_sql_parts = []
         for r in sub:
             input = (r.get("input") or "").strip()
@@ -184,8 +311,9 @@ async def dbricks_merge_rows(session: aiohttp.ClientSession, host: str, token: s
         if not values_sql_parts:
             continue
         values_sql = ",".join(values_sql_parts)
+        print(created_at)
         sql_statement = f"""
-            MERGE INTO {table} AS target
+            MERGE INTO {full_table} AS target
             USING (
                 SELECT col1 AS input, col2 AS answer, to_timestamp(col3) AS created_at, col4 AS agent
                 FROM (VALUES {values_sql}) AS temp(col1, col2, col3, col4)
@@ -196,10 +324,27 @@ async def dbricks_merge_rows(session: aiohttp.ClientSession, host: str, token: s
             WHEN NOT MATCHED THEN
               INSERT (input, answer, created_at, agent) VALUES (source.input, source.answer, source.created_at, source.agent)
         """
+        dbg(f"MERGE SQL ({len(sql_statement)} chars)")
         payload = {"statement": textwrap.dedent(sql_statement), "warehouse_id": warehouse_id}
+        if catalog:
+            payload["catalog"] = catalog
+        if schema:
+            payload["schema"] = schema
+        dbg(f"POST MERGE to {api_base} with payload keys: {list(payload.keys())}")
         # Submit
         async with session.post(api_base, headers=headers, json=payload, timeout=120) as resp:
-            result = await resp.json()
+            status_code = resp.status
+            text_body = await resp.text()
+            dbg(f"POST MERGE status={status_code}, body_len={len(text_body)}")
+            try:
+                result = json.loads(text_body)
+            except Exception:
+                result = {"raw_text": text_body, "status_code": status_code}
+        # Fast-fail on HTTP error to avoid polling with statement_id=None
+        if status_code >= 400:
+            snippet = text_body[:400] if 'text_body' in locals() else str(result)[:400]
+            print(f"❌ [Databricks] MERGE HTTP {status_code}. Body: {snippet}", file=sys.stderr)
+            return
         state = (result.get("status", {}) or {}).get("state")
         if state in ("SUCCEEDED", "FAILED"):
             poll_result = result
@@ -213,9 +358,12 @@ async def dbricks_merge_rows(session: aiohttp.ClientSession, host: str, token: s
                 state = (poll_result.get("status", {}) or {}).get("state")
                 if state not in ("PENDING", "RUNNING"):
                     break
-        if state == "FAILED":
+        dbg(f"Final state for batch: {state}")
+        if state != "SUCCEEDED":
             err_msg = (poll_result.get("status", {}).get("error", {}) or {}).get("message", "Erro desconhecido")
-            print(f"❌ [Databricks] Sub-lote falhou: {err_msg}", file=sys.stderr)
+            details = (poll_result.get("status", {}).get("error", {}) or {}).get("details", "")
+            dbg(f"Error payload snippet: {str(poll_result)[:1200]}")
+            print(f"❌ [Databricks] Sub-lote falhou: {err_msg}. {details[:300]}", file=sys.stderr)
         else:
             print(f"✅ [Databricks] Sub-lote enviado ({len(sub)} linhas).")
 
@@ -319,31 +467,59 @@ async def process_input(
 
     async with semaphore:
         try:
-            create_resp = await client.create_conversation(input)
-            conversation_id = create_resp.get("conversation_id")
-            request_id = create_resp.get("request_id")
-            if not conversation_id or not request_id:
-                raise RuntimeError(f"Resposta inesperada em create_conversation para {input}: {create_resp}")
+            max_attempts = 3
+            attempt = 1
+            final_answer = None
+            while attempt <= max_attempts:
+                try:
+                    create_resp = await client.create_conversation(input)
+                    conversation_id = create_resp.get("conversation_id")
+                    request_id = create_resp.get("request_id")
+                    if not conversation_id or not request_id:
+                        raise RuntimeError(f"Resposta inesperada em create_conversation para {input}: {create_resp}")
 
-            print(f"[POST] Input {input}: conversa criada (conversation_id={conversation_id}, request_id={request_id})")
+                    print(f"[POST] Input {input}: conversa criada (conversation_id={conversation_id}, request_id={request_id}) [tentativa {attempt}/{max_attempts}]")
 
-            answer = await client.poll_answer_until_ready(conversation_id, request_id)
+                    answer = await client.poll_answer_until_ready(conversation_id, request_id)
+                    status = (answer.get("status") or "").lower()
 
-            print(f"[DONE] Input {input}: resposta concluída, salvando...")
+                    if status == "error":
+                        print(f"[RETENTAR] Input {input}: status=error na tentativa {attempt}. Retentando...")
+                        attempt += 1
+                        continue
 
-            # Salva JSON bruto
-            out_dir.mkdir(parents=True, exist_ok=True)
-            with out_path.open("w", encoding="utf-8") as f:
-                json.dump(answer, f, ensure_ascii=False, indent=2)
+                    # sucesso (status diferente de 'error')
+                    final_answer = answer
+                    break
+                except Exception as inner_e:
+                    # falha técnica na tentativa atual -> retentar
+                    print(f"[RETENTAR] Input {input}: falha na tentativa {attempt}: {inner_e}", file=sys.stderr)
+                    attempt += 1
 
-            await pending_mgr.mark_done_and_flush(input)
-            row_result = {
-                "input": input,
-                "answer": answer,
-                "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                "agent": agent_name
-            }
-            print(f"[OK] {input} salvo em {out_path}")
+            if final_answer is None:
+                # Após 3 tentativas com status=error ou falhas técnicas, NÃO remover do CSV
+                print(f"[ERRO] Input {input}: não foi possível obter resposta válida após {max_attempts} tentativas. Mantendo no CSV pendente.", file=sys.stderr)
+                row_result = None
+            else:
+                print(f"[DONE] Input {input}: resposta concluída, salvando...")
+
+                # Salva JSON bruto
+                out_dir.mkdir(parents=True, exist_ok=True)
+                with out_path.open("w", encoding="utf-8") as f:
+                    json.dump(final_answer, f, ensure_ascii=False, indent=2)
+
+                await pending_mgr.mark_done_and_flush(input)
+                try:
+                    parsed_answer = extract_json_from_answer(final_answer.get("answer"))
+                except Exception:
+                    parsed_answer = final_answer.get("answer")
+                row_result = {
+                    "input": input,
+                    "answer": parsed_answer,
+                    "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    "agent": agent_name
+                }
+                print(f"[OK] {input} salvo em {out_path}")
         except Exception as e:
             print(f"[ERRO] Input {input}: {e}", file=sys.stderr)
             row_result = None
@@ -371,7 +547,15 @@ async def main():
     parser.add_argument("--dbricks-table", default=os.getenv("DATABRICKS_TABLE"), help="Tabela de destino (schema.tabela).")
     parser.add_argument("--dbricks-batch-size", type=int, default=1000, help="Tamanho do sublote para envio ao Databricks.")
     parser.add_argument("--agent", default=None, help="Nome do agente. Se não for informado, será derivado da api-key mascarada.")
+    parser.add_argument("--dbricks-debug", action="store_true", help="Log detalhado das chamadas ao Databricks (SQL, payload e resposta).")
+    parser.add_argument("--dbricks-skip-ddl", action="store_true", help="Não tentar criar schema/tabela no Databricks; apenas MERGE.")
+    parser.add_argument("--dbricks-test", action="store_true", help="Executa SELECT 1 no contexto informado (catalog/schema) para checar permissões.")
     args = parser.parse_args()
+
+    global DBRICKS_DEBUG
+    DBRICKS_DEBUG = bool(args.dbricks_debug)
+    if DBRICKS_DEBUG:
+        print("[DBRICKS][DEBUG] Debug de Databricks habilitado.")
 
     if not args.api_key:
         print("Defina --api-key ou a variável de ambiente TOQAN_API_KEY.", file=sys.stderr)
@@ -402,17 +586,20 @@ async def main():
     # Remove inputs já processados (se existir JSON no out_dir)
     inputs = [i for i in inputs if not (out_dir / f"{safe_filename(i)}.json").exists()]
     if not inputs:
-        print("Todos os inputs já foram processados na pasta de saída.")
-        return
+        print("Todos os inputs já foram processados na pasta de saída. Pulando para --collect e --dbricks (se habilitados).")
 
     timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_read=120)
     connector = aiohttp.TCPConnector(limit_per_host=args.concurrency)  # ajuda a não estoura r conexões
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         client = ToqanClient(api_key=args.api_key, session=session, poll_interval=args.poll_interval)
-        pending_mgr = PendingManager(csv_path=csv_path, initial_rows=all_rows, inputs=inputs)
-        semaphore = asyncio.Semaphore(args.concurrency)
-        tasks = [asyncio.create_task(process_input(input, client, out_dir, pending_mgr, semaphore, agent_name)) for input in inputs]
-        results = await asyncio.gather(*tasks)
+
+        if inputs:
+            pending_mgr = PendingManager(csv_path=csv_path, initial_rows=all_rows, inputs=inputs)
+            semaphore = asyncio.Semaphore(args.concurrency)
+            tasks = [asyncio.create_task(process_input(input, client, out_dir, pending_mgr, semaphore, agent_name)) for input in inputs]
+            results = await asyncio.gather(*tasks)
+        else:
+            results = []
 
         # (Opcional) Consolidação automática inline (sem subprocess)
         if args.collect:
@@ -428,7 +615,71 @@ async def main():
             if missing:
                 print(f"[DBRICKS][ERRO] Faltam parâmetros: {missing}", file=sys.stderr)
             else:
-                rows = [r for r in results if isinstance(r, dict) and r.get("input")]
+                # (Opcional) Smoke test de permissões/contexto
+                if args.dbricks_test:
+                    parts = _parse_schema_table(args.dbricks_table or "")
+                    test_sql = "SELECT 1"
+                    dbg(f"Executando smoke test (SELECT 1) em {parts.get('catalog') or '(default)'} . {parts.get('schema')}")
+                    test_res = await dbricks_exec_sql(
+                        session=session,
+                        host=args.dbricks_host,
+                        token=args.dbricks_token,
+                        warehouse_id=args.dbricks_warehouse_id,
+                        sql=test_sql,
+                        catalog=parts.get("catalog", ""),
+                        schema=parts.get("schema", "")
+                    )
+                    test_state = (test_res.get('status', {}) or {}).get('state')
+                    if test_state != "SUCCEEDED":
+                        msg = (test_res.get("status", {}).get("error", {}) or {}).get("message", "Falha no SELECT 1")
+                        details = (test_res.get("status", {}).get("error", {}) or {}).get("details", "")
+                        print(f"❌ [Databricks] Smoke test falhou: {msg}. {details[:300]}", file=sys.stderr)
+                        return
+                    print("✅ [Databricks] Smoke test OK (SELECT 1).")
+                # Garante que a tabela exista (cria schema/tabela se necessário)
+                if not args.dbricks_skip_ddl:
+                    try:
+                        print(args)
+                        await dbricks_ensure_table_exists(
+                            session=session,
+                            host=args.dbricks_host,
+                            token=args.dbricks_token,
+                            warehouse_id=args.dbricks_warehouse_id,
+                            table_ident=args.dbricks_table,
+                        )
+                    except Exception as e:
+                        print(f"[DBRICKS][AVISO] Não foi possível garantir a existência da tabela: {e}", file=sys.stderr)
+                else:
+                    dbg("Pulando DDL (--dbricks-skip-ddl habilitado).")
+                # Monta linhas a partir dos JSONs existentes no out_dir (mesma fonte do --collect)
+                rows = []
+                files = sorted(out_dir.glob(args.collect_pattern))
+                for fp in files:
+                    stem = fp.stem
+                    m = re.match(r"^(.*)_[0-9a-fA-F]{8}$", stem)
+                    input_nohash = m.group(1) if m else stem
+                    try:
+                        with fp.open("r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception as e:
+                        print(f"[DBRICKS][AVISO] Falha ao ler {fp}: {e}", file=sys.stderr)
+                        continue
+                    try:
+                        parsed_answer = extract_json_from_answer(data.get("answer"))
+                    except Exception as e:
+                        print(f"[DBRICKS][AVISO] {fp.name}: não foi possível extrair JSON de 'answer' ({e}), enviando bruto.", file=sys.stderr)
+                        parsed_answer = data.get("answer")
+                    try:
+                        created_at = datetime.fromtimestamp(fp.stat().st_mtime, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    rows.append({
+                        "input": input_nohash,
+                        "answer": parsed_answer,
+                        "created_at": created_at,
+                        "agent": agent_name
+                    })
+
                 try:
                     await dbricks_merge_rows(
                         session=session,
