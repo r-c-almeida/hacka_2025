@@ -12,3 +12,39 @@ outputs/
 
 # Any nested "outputs" folders inside subprojects
 **/outputs/
+
+# Ambientes virtuais
+venv/
+.venv/
+env/
+ENV/
+*.pyenv
+
+# Arquivos de cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Configs locais
+*.env
+*.venv
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Pastas de IDEs
+.idea/
+
+# Arquivos de testes e relatórios
+.coverage
+*.cover
+*.log
+
+# Pastas de build/distribuição
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints
