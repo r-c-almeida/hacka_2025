@@ -94,14 +94,12 @@ async def save_to_dbricks(
     except Exception as e:
         answer_str = f"<<serialize_error:{e}>>"
 
-    # SEMPRE concatena: user_input + UUID + agent + step
-    input_key = f"{user_input}.{agent_name}.{unique_key}"
-
     row = {
-        "input": input_key,
+        "input": user_input,
         "answer": answer_str,
         "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f"),
         "agent": agent_name,
+        "orchestration_id": unique_key
     }
 
     print(f"[DBRICKS] saving input={row['input']}")
@@ -264,7 +262,7 @@ async def run_with_timeout_and_update(
     input_for_key: str,
     placeholder: st.delta_generator.DeltaGenerator,
     coro,
-    unique_key: str,   # << OBRIGATÓRIO
+    unique_key: str,
 ):
     task = asyncio.create_task(coro)
     try:
@@ -275,9 +273,12 @@ async def run_with_timeout_and_update(
 
     parsed = extract_json_from_text(result_raw)
 
-    box = placeholder.container()
-    box.markdown(f"### {step_name}")
-    box.json(parsed) if isinstance(parsed, (dict, list)) else box.write(str(parsed))
+    box = placeholder.container()            # ✅ cria um container
+    box.markdown(f"### {step_name}")         # ✅ escreve no container
+    if isinstance(parsed, (dict, list)):
+        box.json(parsed)                     # ✅ não envolva com st.write
+    else:
+        box.write(str(parsed))
 
     await save_to_dbricks(step_name, input_for_key, result_raw, agent_name, unique_key=unique_key)
     return result_raw, parsed
@@ -670,7 +671,7 @@ def main():
             st.session_state["placeholders"]["step5T"] = st.empty()  # taxo
             st.session_state["placeholders"]["step5N"] = st.empty()  # norma
 
-            with st.spinner("Executando fluxo: 1 → 2 → (dimetris + taxo + norma)…"):
+            with st.spinner("Executando fluxo: 1 (quério → elígio) → 2 → (dimetris + taxo + norma)…"):
                 try:
                     base_results = run_asyncio(workflow_base_with_parallel_tail(user_input.strip()))
                     st.session_state["results"] = base_results

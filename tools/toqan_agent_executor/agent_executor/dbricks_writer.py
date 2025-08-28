@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 import httpx
 import re
 import os
+import uuid
 from datetime import datetime
 
 def _escape_json_for_sql(value):
@@ -36,7 +37,7 @@ class DatabricksWriter:
         poll_interval: float = 2.0,
         max_poll_attempts: int = 60,
     ):
-        self.host = 'https://ifood-prod-main.cloud.databricks.com'
+        self.host = ''
         self.token = ''
         self.warehouse_id = ''
         self.table = 'groceries_sandbox.toqan_answers'
@@ -103,11 +104,12 @@ class DatabricksWriter:
                     _answer = _escape_json_for_sql(r.get("answer", "{}"))
                     _created_at = (r.get("created_at") or "")
                     _agent = _escape_json_for_sql(r.get("agent", ""))
+                    _orchestration_id = _escape_json_for_sql(r.get("orchestration_id", ""))
 
                     if not _input:
                         continue
                     values_sql_parts.append(
-                        f"('{_input}', '{_answer}', '{_created_at}', '{_agent}')"
+                        f"('{_input}', '{_answer}', '{_created_at}', '{_agent}', '{_orchestration_id}', '{str(uuid.uuid4())}')"
                     )
                 if not values_sql_parts:
                     continue
@@ -116,14 +118,14 @@ class DatabricksWriter:
                 sql_statement = f"""
                     MERGE INTO {self.table} AS target
                     USING (
-                        SELECT col1 AS input, col2 AS answer, to_timestamp(col3) AS created_at, col4 AS agent
-                        FROM (VALUES {values_sql}) AS temp(col1, col2, col3, col4)
+                        SELECT col1 AS input, col2 AS answer, to_timestamp(col3) AS created_at, col4 AS agent, col5 AS orchestration_id, col6 AS id
+                        FROM (VALUES {values_sql}) AS temp(col1, col2, col3, col4, col5, col6)
                     ) AS source
-                    ON target.input = source.input
+                    ON target.id  = source.id 
                     WHEN MATCHED AND source.created_at > target.created_at THEN
                       UPDATE SET answer = source.answer, created_at = source.created_at, agent = source.agent
                     WHEN NOT MATCHED THEN
-                      INSERT (input, answer, created_at, agent) VALUES (source.input, source.answer, source.created_at, source.agent)
+                      INSERT (input, answer, created_at, agent, orchestration_id, id) VALUES (source.input, source.answer, source.created_at, source.agent, source.orchestration_id, source.id)
                 """
                 sql_statement = textwrap.dedent(sql_statement)
 
