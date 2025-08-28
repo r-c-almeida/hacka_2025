@@ -1,0 +1,154 @@
+[
+    {
+        "id": "947f7205-1f20-b0b2-cf86-87b30f67a416",
+        "name": "ampolas"
+    },
+    {
+        "id": "89bc6a65-b375-cffe-6acc-2cd0186fb0b7",
+        "name": "aplicações"
+    },
+    {
+        "id": "db050c24-5add-d4b4-bf68-a1c45eab7f6f",
+        "name": "bastões"
+    },
+    {
+        "id": "67a235eb-fe91-5b02-7eae-68885ca92ae4",
+        "name": "caps"
+    },
+    {
+        "id": "65c08e6f-d41a-c34f-243f-fa47ab1110be",
+        "name": "carpules"
+    },
+    {
+        "id": "c76c40e2-f6a7-e9fa-e88e-49c68e72fb29",
+        "name": "cm"
+    },
+    {
+        "id": "bb560310-3015-d4e3-f063-c19c09864915",
+        "name": "cpr"
+    },
+    {
+        "id": "f5904720-424d-ba68-2830-c46084f71527",
+        "name": "cps"
+    },
+    {
+        "id": "a53c82da-847c-3fa6-38fc-6ed9fa5a3ca2",
+        "name": "doses"
+    },
+    {
+        "id": "c38cc20a-4f71-ea7f-a690-50c4d31c3408",
+        "name": "drágeas"
+    },
+    {
+        "id": "61a387ef-2567-2988-6193-f4aa6cb6afac",
+        "name": "emplastros"
+    },
+    {
+        "id": "0b4215db-6ef4-40ec-ecc5-b83bac01a9f9",
+        "name": "envelopes"
+    },
+    {
+        "id": "f038f93e-e2ea-8823-846c-af2d37cc524c",
+        "name": "flaconetes"
+    },
+    {
+        "id": "0803517b-b194-9dff-6e7c-c919a739158c",
+        "name": "fls"
+    },
+    {
+        "id": "10b39ebd-9f05-cdde-73d5-1218b91ef5da",
+        "name": "frascos"
+    },
+    {
+        "id": "93549a6e-6f63-cf57-dbdb-97bcaea12ebe",
+        "name": "g"
+    },
+    {
+        "id": "3fe720ac-8dd3-a96c-f417-09ca8aebb137",
+        "name": "itens"
+    },
+    {
+        "id": "ecb6e6d2-7f16-8f3e-7350-bf2bc5250f23",
+        "name": "kg"
+    },
+    {
+        "id": "e0c92b87-e4ce-cf67-e2ed-c6cf7aaa8244",
+        "name": "l"
+    },
+    {
+        "id": "9264b8e8-ce59-5795-272c-b81d596abcaf",
+        "name": "lancetas"
+    },
+    {
+        "id": "ab596246-2db8-83d9-ffb7-3bd67fa31ce7",
+        "name": "m"
+    },
+    {
+        "id": "6e7866d0-ba87-6b42-0afe-2abe01164833",
+        "name": "mg"
+    },
+    {
+        "id": "00a9ad8f-1165-4bbd-60e5-b29b965bc715",
+        "name": "ml"
+    },
+    {
+        "id": "4419276a-24ca-a38a-c702-39589d9aa647",
+        "name": "palitos"
+    },
+    {
+        "id": "9ef2a9b5-daf3-4a78-1185-514ba35bc805",
+        "name": "par"
+    },
+    {
+        "id": "2c900f96-98c2-49c7-78cf-839ebbbdf098",
+        "name": "pares"
+    },
+    {
+        "id": "63bb2ea0-440d-474f-1923-6424a547d999",
+        "name": "pastilhas"
+    },
+    {
+        "id": "17ffe65f-ef56-c897-8ccf-0fc5b9415653",
+        "name": "pgs"
+    },
+    {
+        "id": "aa25378d-78dc-bb4d-be49-57d819647da3",
+        "name": "pç"
+    },
+    {
+        "id": "53c88df5-bb92-b549-7126-1358661a352d",
+        "name": "pçs"
+    },
+    {
+        "id": "469f6c32-25f0-db47-9f97-522a8a3c9b31",
+        "name": "rls"
+    },
+    {
+        "id": "4a4d05a6-9f43-1111-031b-b8cec12ed751",
+        "name": "sachês"
+    },
+    {
+        "id": "4bfd73e2-f167-d4ee-dcc1-5bcde448ffc9",
+        "name": "seringas"
+    },
+    {
+        "id": "76386802-6ff0-de0c-a8b5-e8309989fc5c",
+        "name": "supositórios"
+    },
+    {
+        "id": "9b2a2c37-bae7-2d68-97f9-0d05b63a03ac",
+        "name": "tabletes"
+    },
+    {
+        "id": "b90207b5-3c92-6124-3509-77652691dadd",
+        "name": "tablets"
+    },
+    {
+        "id": "5c1ca960-3740-1546-c7c5-fbc987d8ca2d",
+        "name": "un"
+    },
+    {
+        "id": "40372865-ceca-c19c-df4d-25813dacfaf1",
+        "name": "unidades"
+    }
+]

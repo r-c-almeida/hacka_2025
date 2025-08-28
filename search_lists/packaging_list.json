@@ -1,0 +1,122 @@
+[
+    {
+        "id": "1718b4b7-32d1-487d-1f18-e8580cc5182a",
+        "name": "1 Par"
+    },
+    {
+        "id": "2641e5c3-09ea-6015-a9ba-69bf7b621490",
+        "name": "Balde"
+    },
+    {
+        "id": "53730f47-d6dd-7615-1a37-07a152a54525",
+        "name": "Bandeja"
+    },
+    {
+        "id": "0d11ea6d-c23c-20a8-d570-5b8b66d0c666",
+        "name": "Barril"
+    },
+    {
+        "id": "26788d90-a314-fc3a-3f47-41f9da517c37",
+        "name": "Blíster"
+    },
+    {
+        "id": "dc81a726-0bd8-b6a2-3d3a-2ecb51fbf175",
+        "name": "Caixa"
+    },
+    {
+        "id": "5cff6c39-e7b8-32c3-11ee-f5030cccd570",
+        "name": "Cartela"
+    },
+    {
+        "id": "d7262f27-e25e-1e07-7110-a62b622e61ec",
+        "name": "Cesta"
+    },
+    {
+        "id": "b75d7e60-34a9-018f-09a5-d7ea5d03e310",
+        "name": "Conjunto"
+    },
+    {
+        "id": "c33b66df-d0f3-bffc-5e94-67da43a27dff",
+        "name": "Embalagem"
+    },
+    {
+        "id": "0f041e9f-d9e3-e39d-3281-f784ea2e4d0e",
+        "name": "Fardo"
+    },
+    {
+        "id": "631122ac-02ea-94e4-a420-a9d615386405",
+        "name": "Frasco"
+    },
+    {
+        "id": "8f43a4aa-52d2-5df4-a60b-d820a6a3d03d",
+        "name": "Galão"
+    },
+    {
+        "id": "e0557971-7244-9ea6-9082-7f1d69558b7a",
+        "name": "Garrafa"
+    },
+    {
+        "id": "f5e03015-b8c0-20e3-89ed-6ceef13bfdc5",
+        "name": "Garrafa Retornável"
+    },
+    {
+        "id": "53447434-6327-c8d2-876d-184d31206465",
+        "name": "Kg"
+    },
+    {
+        "id": "adfe64b5-d4e6-ff5b-a23a-f35fc7984988",
+        "name": "Kit"
+    },
+    {
+        "id": "fe67ef5c-d0ea-6c14-84f8-b060773948db",
+        "name": "Lata"
+    },
+    {
+        "id": "0a14b201-8cca-8e83-3e85-3c0d2fb21509",
+        "name": "Maço"
+    },
+    {
+        "id": "6694b5fd-102b-4a25-fc08-873b816fd0f8",
+        "name": "Pack"
+    },
+    {
+        "id": "a495c9b2-d236-95c7-b895-c6dcdcfedb79",
+        "name": "Pacote"
+    },
+    {
+        "id": "f9d4134b-8793-7f4b-b3cd-96faedeefe6c",
+        "name": "Pedaço"
+    },
+    {
+        "id": "eb7bcab0-7556-6cf0-d26d-21c7ac05ad01",
+        "name": "Peça"
+    },
+    {
+        "id": "7bb81e31-c243-6e93-0d1c-fa66e04963ff",
+        "name": "Porção"
+    },
+    {
+        "id": "6f645f5e-f39e-e9fa-628f-5fdc1138b76b",
+        "name": "Pote"
+    },
+    {
+        "id": "bee0e50d-8fa7-fc11-2702-bcd0f9b4f5b0",
+        "name": "Sachê"
+    },
+    {
+        "id": "c48e84e1-fde1-3f4a-fc04-4088c9028dd7",
+        "name": "Saco"
+    },
+    {
+        "id": "f793898c-f4f1-efc8-0542-967018133d45",
+        "name": "Sacola"
+    },
+    {
+        "id": "ed8624d6-3b47-c6d1-f5e1-e2962e3b77c1",
+        "name": "Unidade"
+    },
+    {
+        "id": "d658c061-a3cf-666f-7dcf-ea4d2aad28c2",
+        "name": "Vidro"
+    }
+]
