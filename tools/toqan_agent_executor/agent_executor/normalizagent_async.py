@@ -18,6 +18,7 @@ agent_taxo_key = ''
 agent_homer_key = ''
 agent_medison_key = ''
 agent_norma_key = ''
+agent_xande_key = ''
 
 API_BASE = "https://api.coco.prod.toqan.ai"
 STEP_TIMEOUT_SECONDS = 30
@@ -25,8 +26,10 @@ STEP_TIMEOUT_SECONDS = 30
 def _norm_label(s: Optional[str]) -> str:
     if not s:
         return ""
+    import unicodedata
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     return s.strip().lower()
+
 
 def _pick_auto_agent_from_taxo(taxo_parsed: Any) -> Optional[str]:
     """
@@ -57,71 +60,46 @@ def _pick_auto_agent_from_taxo(taxo_parsed: Any) -> Optional[str]:
 
     return None
 
+
+def _taxo_bucket(taxo_parsed: Any) -> Optional[str]:
+    """
+    Retorna 'homer'|'medison'|'fraldete' conforme TAXO, ou None para outras categorias.
+    """
+    try:
+        level1 = taxo_parsed.get("metadata", {}).get("current", {}).get("global_taxonomy_level1")
+    except Exception:
+        level1 = None
+    lbl = _norm_label(level1) if level1 else ""
+    if lbl.endswith("s"):
+        lbl = lbl[:-1]
+    if lbl == "cerveja":
+        return "homer"
+    if lbl in ("medicamento", "remedio"):
+        return "medison"
+    if lbl == "fralda":
+        return "fraldete"
+    return None
+
+
 def _get_ph(name: str) -> st.delta_generator.DeltaGenerator:
     phs = st.session_state.setdefault("placeholders", {})
     if name not in phs or phs[name] is None:
-        # container persistente (não apaga entre execuções)
         phs[name] = st.container()
     return phs[name]
 
-# =========================
-# Databricks – init (usa env ou st.secrets)
-# =========================
-def _init_dbricks_writer():
-    # tenta pegar de st.secrets primeiro, se existir
-    #host = st.secrets.get("DATABRICKS_HOST") if hasattr(st, "secrets") else None
-    #token = st.secrets.get("DATABRICKS_TOKEN") if hasattr(st, "secrets") else None
-    #wh = st.secrets.get("DATABRICKS_WAREHOUSE_ID") if hasattr(st, "secrets") else None
-    #table = st.secrets.get("DATABRICKS_TABLE") if hasattr(st, "secrets") else None
-    return DatabricksWriter()
-
-dbricks = _init_dbricks_writer()
-
-async def save_to_dbricks(
-    step_name: str,
-    user_input: str,
-    raw_answer: Any,
-    agent_name: str,
-    unique_key: str
-):
-    if not dbricks.is_enabled():
-        if dbricks.missing_vars():
-            print(f"[DBRICKS] Não configurado. Faltando: {dbricks.missing_vars()}")
-        return
-
-    try:
-        answer_str = json.dumps(raw_answer, ensure_ascii=False) if isinstance(raw_answer, (dict, list)) else str(raw_answer)
-    except Exception as e:
-        answer_str = f"<<serialize_error:{e}>>"
-
-    row = {
-        "input": user_input,
-        "answer": answer_str,
-        "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f"),
-        "agent": agent_name,
-        "orchestration_id": unique_key
-    }
-
-    print(f"[DBRICKS] saving input={row['input']}")
-    try:
-        await dbricks.merge_rows([row], batch_size=1)
-    except Exception as e:
-        print(f"[DBRICKS][ERRO_SAVE] {e}")
-
-# =========================
-# Utils – parsing
-# =========================
 
 def clean_code_fence(s: str) -> str:
     if not isinstance(s, str):
         return s
     return re.sub(r"^```(?:json)?\s*|\s*```$", "", s.strip(), flags=re.DOTALL | re.IGNORECASE)
 
+
 def _try_json(text: str) -> Optional[Union[dict, list]]:
     try:
         return json.loads(text)
     except Exception:
         return None
+
 
 def extract_json_from_text(s: Union[str, Dict, list]) -> Union[Dict[str, Any], list, str]:
     if isinstance(s, (dict, list)):
@@ -155,6 +133,7 @@ def extract_json_from_text(s: Union[str, Dict, list]) -> Union[Dict[str, Any], l
 
     return raw
 
+
 def ensure_json_serializable(obj: Any) -> Any:
     if isinstance(obj, (dict, list, str, int, float, bool)) or obj is None:
         return obj
@@ -163,6 +142,7 @@ def ensure_json_serializable(obj: Any) -> Any:
         return obj
     except Exception:
         return str(obj)
+
 
 def run_asyncio(task):
     try:
@@ -173,10 +153,76 @@ def run_asyncio(task):
             return loop.run_until_complete(task)
         raise
 
+
+# =========================
+# Databricks – init (usa env ou st.secrets)
+# =========================
+class DatabricksWriter:
+    """
+    Placeholder de exemplo. No seu projeto real, use sua implementação.
+    """
+    def __init__(self):
+        self._enabled = True
+
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    def missing_vars(self):
+        return []
+
+    async def merge_rows(self, rows, batch_size=1):
+        # implemente conforme seu projeto
+        pass
+
+
+def _init_dbricks_writer():
+    # tenta pegar de st.secrets primeiro, se existir
+    # host = st.secrets.get("DATABRICKS_HOST") if hasattr(st, "secrets") else None
+    # token = st.secrets.get("DATABRICKS_TOKEN") if hasattr(st, "secrets") else None
+    # wh = st.secrets.get("DATABRICKS_WAREHOUSE_ID") if hasattr(st, "secrets") else None
+    # table = st.secrets.get("DATABRICKS_TABLE") if hasattr(st, "secrets") else None
+    return DatabricksWriter()
+
+
+dbricks = _init_dbricks_writer()
+
+
+async def save_to_dbricks(
+    step_name: str,
+    user_input: str,
+    raw_answer: Any,
+    agent_name: str,
+    unique_key: str
+):
+    if not dbricks.is_enabled():
+        if dbricks.missing_vars():
+            print(f"[DBRICKS] Não configurado. Faltando: {dbricks.missing_vars()}")
+        return
+
+    try:
+        answer_str = json.dumps(raw_answer, ensure_ascii=False) if isinstance(raw_answer, (dict, list)) else str(raw_answer)
+    except Exception as e:
+        answer_str = f"<<serialize_error:{e}>>"
+
+    row = {
+        "id": str(uuid.uuid4()),
+        "input": user_input,
+        "answer": answer_str,
+        "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f"),
+        "agent": agent_name,
+        "orchestration_id": unique_key
+    }
+
+    print(f"[DBRICKS] saving input={row['input']}")
+    try:
+        await dbricks.merge_rows([row], batch_size=1)
+    except Exception as e:
+        print(f"[DBRICKS][ERRO_SAVE] {e}")
+
+
 # =========================
 # Cliente Toqan (create/get/continue)
 # =========================
-
 async def start_agent_async(message: str, api_key: str, client: httpx.AsyncClient) -> Tuple[Optional[str], Optional[str]]:
     payload = {"user_message": message}
     headers = {"X-Api-Key": api_key}
@@ -184,6 +230,7 @@ async def start_agent_async(message: str, api_key: str, client: httpx.AsyncClien
     r.raise_for_status()
     data = r.json()
     return data.get("conversation_id"), data.get("request_id")
+
 
 async def continue_agent_async(conversation_id: str, message: str, api_key: str, client: httpx.AsyncClient) -> Optional[str]:
     headers = {"X-Api-Key": api_key}
@@ -195,6 +242,7 @@ async def continue_agent_async(conversation_id: str, message: str, api_key: str,
     r.raise_for_status()
     data = r.json()
     return data.get("request_id")
+
 
 async def get_agent_answer_async(conversation_id: str, request_id: str, api_key: str, client: httpx.AsyncClient) -> str:
     headers = {"X-Api-Key": api_key}
@@ -214,10 +262,10 @@ async def get_agent_answer_async(conversation_id: str, request_id: str, api_key:
         else:
             await asyncio.sleep(0.5)
 
+
 # =========================
 # Conversas persistentes por api_key
 # =========================
-
 def _init_state():
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -225,8 +273,14 @@ def _init_state():
         st.session_state["results"] = {}
     if "placeholders" not in st.session_state:
         st.session_state["placeholders"] = {}
+    if "agents_enabled" not in st.session_state:
+        st.session_state["agents_enabled"] = False
+    if "last_product_uuid" not in st.session_state:
+        st.session_state["last_product_uuid"] = None
+
 
 _init_state()
+
 
 async def start_or_continue_agent_async(message: Any, api_key: str, client: httpx.AsyncClient) -> str:
     if isinstance(message, (dict, list)):
@@ -252,39 +306,60 @@ async def start_or_continue_agent_async(message: Any, api_key: str, client: http
 
     return await get_agent_answer_async(conversation_id, request_id, api_key, client)
 
+
 # =========================
 # Helpers para UI com timeout + SAVE
 # =========================
-
 async def run_with_timeout_and_update(
     step_name: str,
     agent_name: str,
     input_for_key: str,
     placeholder: st.delta_generator.DeltaGenerator,
     coro,
-    unique_key: str,
+    unique_key: Optional[str] = None,
 ):
+    # header + status imediato
+    parent = placeholder.container()
+    parent.markdown(f"### {step_name}")
+    status_ph = parent.empty()
+    status_ph.info("Iniciando…")
+
+    # dispara a task
     task = asyncio.create_task(coro)
+
+    # mostra feedback de execução enquanto aguarda
+    running = True
     try:
+        # mostra “Executando…” logo de cara (sem esperar timeout)
+        status_ph.info("⏳ Executando…")
         result_raw = await asyncio.wait_for(asyncio.shield(task), timeout=STEP_TIMEOUT_SECONDS)
+        running = False
     except asyncio.TimeoutError:
-        placeholder.container().info(f"Ainda executando o {step_name}…")
+        # se estourar o timeout, mantém aviso e segue esperando terminar
+        status_ph.warning("⏳ Ainda executando… (demorando mais que o normal)")
         result_raw = await task
+        running = False
+    finally:
+        # limpa o status quando terminar
+        if not running:
+            status_ph.empty()
 
     parsed = extract_json_from_text(result_raw)
 
-    box = placeholder.container()            # ✅ cria um container
-    box.markdown(f"### {step_name}")         # ✅ escreve no container
+    # conteúdo final no mesmo container
     if isinstance(parsed, (dict, list)):
-        box.json(parsed)                     # ✅ não envolva com st.write
+        parent.json(parsed)
     else:
-        box.write(str(parsed))
+        parent.write(str(parsed))
 
-    await save_to_dbricks(step_name, input_for_key, result_raw, agent_name, unique_key=unique_key)
+    # persistência
+    run_uuid = unique_key or st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+    await save_to_dbricks(step_name, input_for_key, result_raw, agent_name, unique_key=run_uuid)
     return result_raw, parsed
 
+
 # =========================
-# Fluxo base (parcial): 1→2→3
+# Fluxos
 # =========================
 async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
@@ -293,11 +368,10 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
 
     run_uuid = st.session_state.get("last_product_uuid")
     if not run_uuid:
-        # se quiser que seja determinístico por EAN, troque por: uuid.uuid5(uuid.NAMESPACE_URL, user_input)
         run_uuid = str(uuid.uuid4())
     st.session_state["last_product_uuid"] = run_uuid
-    
-    # --- Placeholders (agora sempre definidos) ---
+
+    # Placeholders
     ph1  = _get_ph("step1")   # querio
     ph2  = _get_ph("step2")   # eligio
     ph3  = _get_ph("step3")   # dimetris
@@ -307,6 +381,8 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
     ph5h = _get_ph("step5H")  # homer (auto)
     ph5m = _get_ph("step5M")  # medison (auto)
     ph5f = _get_ph("step5F")  # fraldete (auto)
+    # xande
+    ph6x = _get_ph("step6X")  # xande (final)
 
     async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
         # 1) querio
@@ -349,8 +425,8 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
         )
         taxo_task = asyncio.create_task(
             run_with_timeout_and_update(
-                "taxo_analyzer",
-                "taxo_analyzer",
+                "oliveira_analyzer",
+                "oliveira_analyzer",
                 user_input,
                 ph5t,
                 start_or_continue_agent_async({"eligio_product_selector": parsed2}, agent_taxo_key, client),
@@ -370,13 +446,13 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
 
         # Espera o TAXO para decidir disparo automático
         rawT, parsedT = await taxo_task
-        results["taxo_analyzer_raw"] = rawT
-        results["taxo_analyzer"] = parsedT
+        results["oliveira_analyzer_raw"] = rawT
+        results["oliveira_analyzer"] = parsedT
 
         which = _pick_auto_agent_from_taxo(parsedT)  # cerveja/medicamento/remédio/fraldas
         auto_task = None
         if which == "homer" and agent_homer_key:
-            payload = {"eligio_product_selector": parsed2, "taxo_analyzer": parsedT}
+            payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
             auto_task = asyncio.create_task(
                 run_with_timeout_and_update(
                     "homer_analyzer (auto)",
@@ -388,7 +464,7 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
                 )
             )
         elif which == "medison" and agent_medison_key:
-            payload = {"eligio_product_selector": parsed2, "taxo_analyzer": parsedT}
+            payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
             auto_task = asyncio.create_task(
                 run_with_timeout_and_update(
                     "medison_analyzer (auto)",
@@ -400,7 +476,7 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
                 )
             )
         elif which == "fraldete" and agent_fraldete_key:
-            payload = {"eligio_product_selector": parsed2, "taxo_analyzer": parsedT}
+            payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
             auto_task = asyncio.create_task(
                 run_with_timeout_and_update(
                     "fraldete_analyzer (auto)",
@@ -433,7 +509,35 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
                 results["fraldete_analyzer_raw_auto"] = rawA
                 results["fraldete_analyzer_auto"] = parsedA
 
+        # =========================
+        # Auto-chamada do Xande
+        # Regras:
+        # - Se bucket NÃO é fralda/cerveja/medicamento => chama Xande agora (temos Taxo/Norma/Dimetris prontos)
+        # - Se bucket É um dos três => chama Xande após o analyzer correspondente (auto) finalizar
+        # =========================
+        try:
+            xande_should_run = False
+            bucket = _taxo_bucket(parsedT)
+
+            if bucket is None:
+                # categoria "outras": já temos Taxo/Norma/Dimetris prontos
+                xande_should_run = True
+            else:
+                # bucket específico; só dispara se o respectivo analyzer (auto) tiver terminado
+                if bucket == "homer" and ("homer_analyzer_auto" in results):
+                    xande_should_run = True
+                elif bucket == "medison" and ("medison_analyzer_auto" in results):
+                    xande_should_run = True
+                elif bucket == "fraldete" and ("fraldete_analyzer_auto" in results):
+                    xande_should_run = True
+
+            if xande_should_run:
+                await run_xande_from_cache_stream(user_input, unique_key=run_uuid)
+        except Exception as e:
+            print(f"[XANDE][AUTO] Falha ao executar: {e}")
+
     return results
+
 
 async def workflow_base_streaming(user_input: str) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
@@ -482,17 +586,17 @@ async def workflow_base_streaming(user_input: str) -> Dict[str, Any]:
 
     return results
 
-# =========================
-# Botões: taxo, fraldete, homer (com SAVE)
-# =========================
 
+# =========================
+# Runners extras (cache)
+# =========================
 async def run_taxo_from_cache_stream(user_input: str) -> Dict[str, Any]:
     results = st.session_state.get("results", {})
     step2_parsed = results.get("eligio_product_selector")
     if not agent_taxo_key:
         return {"error": "agent_taxo_key não configurada."}
     if not step2_parsed:
-        return {"error": "Resultado do passo 2 (eligio) não encontrado no cache."}
+        return {"error": "Resultado do Eligio não encontrado no cache."}
 
     ph4 = st.session_state["placeholders"].setdefault("step4", st.empty())
 
@@ -500,32 +604,33 @@ async def run_taxo_from_cache_stream(user_input: str) -> Dict[str, Any]:
     timeout = httpx.Timeout(30.0)
     async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
         raw4, parsed4 = await run_with_timeout_and_update(
-            "taxo_analyzer",
-            "taxo_analyzer",
+            "oliveira_analyzer",
+            "oliveira_analyzer",
             user_input,
             ph4,
             start_or_continue_agent_async(ensure_json_serializable(step2_parsed), agent_taxo_key, client),
         )
-        results["taxo_analyzer_raw"] = raw4
-        results["taxo_analyzer"] = parsed4
+        results["oliveira_analyzer_raw"] = raw4
+        results["oliveira_analyzer"] = parsed4
         st.session_state["results"] = results
         return {"ok": True}
+
 
 async def run_fraldete_from_cache_stream(user_input: str) -> Dict[str, Any]:
     results = st.session_state.get("results", {})
     step2_parsed = results.get("eligio_product_selector")
     step3_parsed = results.get("dimetris_product_search_dimension")
-    step4_parsed = results.get("taxo_analyzer")  # opcional
+    step4_parsed = results.get("oliveira_analyzer")  # opcional
 
     if not step2_parsed or not step3_parsed:
-        return {"error": "É necessário ter os resultados de eligio (2) e dimetris (3) no cache."}
+        return {"error": "É necessário ter os resultados de Eligio e Dimetris no cache."}
     if not agent_fraldete_key:
         return {"error": "agent_fraldete_key não configurada."}
 
     payload = {
         "eligio_product_selector": step2_parsed,
         "dimetris_product_search_dimension": step3_parsed,
-        "taxo_analyzer": step4_parsed,
+        "oliveira_analyzer": step4_parsed,
     }
 
     ph5 = st.session_state["placeholders"].setdefault("step5F", st.empty())
@@ -545,21 +650,22 @@ async def run_fraldete_from_cache_stream(user_input: str) -> Dict[str, Any]:
         st.session_state["results"] = results
         return {"ok": True}
 
+
 async def run_homer_from_cache_stream(user_input: str) -> Dict[str, Any]:
     results = st.session_state.get("results", {})
     step2_parsed = results.get("eligio_product_selector")
     step3_parsed = results.get("dimetris_product_search_dimension")
-    step4_parsed = results.get("taxo_analyzer")  # opcional
+    step4_parsed = results.get("oliveira_analyzer")  # opcional
 
     if not agent_homer_key:
         return {"error": "agent_homer_key não configurada."}
     if not step2_parsed or not step3_parsed:
-        return {"error": "É necessário ter os resultados de eligio (2) e dimetris (3) no cache."}
+        return {"error": "É necessário ter os resultados de Eligio e Dimetris no cache."}
 
     payload = {
         "eligio_product_selector": step2_parsed,
         "dimetris_product_search_dimension": step3_parsed,
-        "taxo_analyzer": step4_parsed,
+        "oliveira_analyzer": step4_parsed,
     }
 
     ph5h = st.session_state["placeholders"].setdefault("step5H", st.empty())
@@ -579,21 +685,22 @@ async def run_homer_from_cache_stream(user_input: str) -> Dict[str, Any]:
         st.session_state["results"] = results
         return {"ok": True}
 
+
 async def run_medison_from_cache_stream(user_input: str, unique_key: Optional[str] = None) -> Dict[str, Any]:
     results = st.session_state.get("results", {})
     step2_parsed = results.get("eligio_product_selector")
     step3_parsed = results.get("dimetris_product_search_dimension")
-    step4_parsed = results.get("taxo_analyzer")  # opcional
+    step4_parsed = results.get("oliveira_analyzer")  # opcional
 
     if not agent_medison_key:
         return {"error": "agent_medison_key não configurada."}
     if not step2_parsed or not step3_parsed:
-        return {"error": "É necessário ter os resultados de eligio (2) e dimetris (3) no cache."}
+        return {"error": "É necessário ter os resultados de Eligio e Dimetris no cache."}
 
     payload = {
         "eligio_product_selector": step2_parsed,
         "dimetris_product_search_dimension": step3_parsed,
-        "taxo_analyzer": step4_parsed,
+        "oliveira_analyzer": step4_parsed,
     }
 
     ph5m = st.session_state["placeholders"].setdefault("step5M", st.container())
@@ -607,106 +714,203 @@ async def run_medison_from_cache_stream(user_input: str, unique_key: Optional[st
             user_input,
             ph5m,
             start_or_continue_agent_async(payload, agent_medison_key, client),
-            unique_key=unique_key,  # << repassa
+            unique_key=unique_key,
         )
         results["medison_analyzer_raw"] = rawM
         results["medison_analyzer"] = parsedM
         st.session_state["results"] = results
         return {"ok": True}
 
+
+async def run_xande_from_cache_stream(user_input: str, unique_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Executa o agent Xande com TODO o payload coletado até aqui.
+    - Requer: Querio, Eligio, Dimetris, Oliveira (taxo) e Norma.
+    - Se categoria TAXO for 'homer'/'medison'/'fraldete', espera também o respectivo analyzer
+      caso ele tenha sido executado (auto ou manual).
+    """
+    if not agent_xande_key:
+        return {"error": "agent_xande_key não configurada."}
+
+    results = st.session_state.get("results", {})
+    required_keys = [
+        "querio_product_searcher",
+        "eligio_product_selector",
+        "dimetris_product_search_dimension",
+        "oliveira_analyzer",
+        "norma_analyzer",
+    ]
+    missing = [k for k in required_keys if k not in results]
+    if missing:
+        return {"error": f"Xande: payload incompleto. Faltando: {', '.join(missing)}"}
+
+    which = _taxo_bucket(results.get("oliveira_analyzer"))
+    extra_missing = []
+    if which == "homer":
+        if not (("homer_analyzer" in results) or ("homer_analyzer_auto" in results)):
+            extra_missing.append("homer_analyzer")
+    elif which == "medison":
+        if not (("medison_analyzer" in results) or ("medison_analyzer_auto" in results)):
+            extra_missing.append("medison_analyzer")
+    elif which == "fraldete":
+        if not (("fraldete_analyzer" in results) or ("fraldete_analyzer_auto" in results)):
+            extra_missing.append("fraldete_analyzer")
+
+    if extra_missing:
+        return {"error": f"Xande: aguardando finalização de: {', '.join(extra_missing)}"}
+
+    payload = ensure_json_serializable(results)
+    ph6x = st.session_state["placeholders"].setdefault("step6X", st.container())
+
+    limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+    timeout = httpx.Timeout(30.0)
+    run_uuid = unique_key or st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+
+    async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
+        rawX, parsedX = await run_with_timeout_and_update(
+            "xande_aggregator",
+            "xande_aggregator",
+            user_input,
+            ph6x,
+            start_or_continue_agent_async(payload, agent_xande_key, client),
+            unique_key=run_uuid,
+        )
+
+    results["xande_aggregator_raw"] = rawX
+    results["xande_aggregator"] = parsedX
+    st.session_state["results"] = results
+    return {"ok": True}
+
+
 # =========================
 # Streamlit UI
 # =========================
-
 def main():
-    st.set_page_config(page_title="Toqan + Databricks", page_icon="🤖", layout="wide")
-    st.title("Toqan – Exibição Parcial + Timeout + Conversas Persistentes + Save Databricks")
+    st.set_page_config(page_title="iPadronizAI", page_icon="🤖", layout="wide")
+    st.title("iFood - iPadronizAI")
 
     if not dbricks.is_enabled():
         if dbricks.missing_vars():
             st.warning(f"Databricks não configurado. Faltando: {', '.join(dbricks.missing_vars())}")
 
-    user_input = st.text_area("Entrada do Passo 1 (ex.: EAN, nome do produto, etc.)", "", key="txt_user_input")
+    user_input = st.text_area("Ean do produto para ser pesquisado", "", key="txt_user_input")
 
-    # ---- Botões (agora todos com key únicos)
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    # ---- Botões (linha principal) – agora com Xande
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        run_base_btn = st.button("Executar base (1→2→ paralelos)", key="btn_run_base")
+        run_base_btn = st.button("Pesquisar Produto", key="btn_run_base")
+
+    analyzers_disabled = not st.session_state.get("agents_enabled", False)
+
     with c2:
-        # Taxo saiu do botão e foi para a execução paralela.
-        # Aqui entra o MEDISON (no lugar do antigo taxo)
-        medison_btn = st.button("Rodar medison_analyzer", key="btn_medison")
+        medison_btn = st.button("Medison", key="btn_medison", disabled=analyzers_disabled)
     with c3:
-        fraldete_btn = st.button("Rodar fraldete_analyzer", key="btn_fraldete")
+        fraldete_btn = st.button("Fraldete", key="btn_fraldete", disabled=analyzers_disabled)
     with c4:
-        homer_btn = st.button("Rodar homer_analyzer", key="btn_homer")
+        homer_btn = st.button("Homer", key="btn_homer", disabled=analyzers_disabled)
     with c5:
-        reset_conv_btn = st.button("Resetar conversas", key="btn_reset_convs")
+        xande_btn = st.button("Xande", key="btn_xande", disabled=False)  # sempre habilitado
+
+    # ---- Linha 2: Reset/Limpeza ----
+    c6, c7, c8 = st.columns(3)
     with c6:
+        reset_conv_btn = st.button("Resetar conversas", key="btn_reset_convs")
+    with c7:
         clear_res_btn = st.button("Limpar resultados", key="btn_clear_results")
+    with c8:
+        clear_ui_btn = st.button("Limpar UI (placeholders)", key="btn_clear_ui")
 
-    clear_ui_btn = st.button("Limpar UI (placeholders)", key="btn_clear_ui")
-
-    # ---- Ações dos botões
+    # ---- Ações dos botões utilitários
     if reset_conv_btn:
         st.session_state["conversations"] = {}
+        st.session_state["agents_enabled"] = False
         st.success("Conversas resetadas para todos os agentes.")
 
     if clear_res_btn:
         st.session_state["results"] = {}
+        st.session_state["agents_enabled"] = False
         st.success("Resultados limpos.")
 
     if clear_ui_btn:
         st.session_state["placeholders"] = {}
+        st.session_state["agents_enabled"] = False
         st.success("Placeholders limpos.")
 
+    # ---- Execução do fluxo base
     if run_base_btn:
         if not user_input.strip():
-            st.warning("Informe a entrada do passo 1.")
+            st.warning("Informe o código de barras do produto")
         else:
-            # zera placeholders relevantes do fluxo paralelo (dimetris + taxo + norma)
-            st.session_state["placeholders"]["step1"] = st.empty()
-            st.session_state["placeholders"]["step2"] = st.empty()
-            st.session_state["placeholders"]["step3"] = st.empty()
-            st.session_state["placeholders"]["step5T"] = st.empty()  # taxo
-            st.session_state["placeholders"]["step5N"] = st.empty()  # norma
+            try:
+                base_results = run_asyncio(workflow_base_with_parallel_tail(user_input.strip()))
+                st.session_state["results"] = base_results
+                st.session_state["agents_enabled"] = True
+                st.success("Fluxo concluído.")
+            except Exception as e:
+                st.session_state["agents_enabled"] = False
+                st.error(f"Falha no fluxo: {e}")
 
-            with st.spinner("Executando fluxo: 1 (quério → elígio) → 2 → (dimetris + taxo + norma)…"):
-                try:
-                    base_results = run_asyncio(workflow_base_with_parallel_tail(user_input.strip()))
-                    st.session_state["results"] = base_results
-                    st.success("Fluxo concluído: querio, eligio, (dimetris + taxo + norma em paralelo).")
-                except Exception as e:
-                    st.error(f"Falha no fluxo: {e}")
+            # (Se quiser manter o spinner adicional do seu script original, descomente)
+            # with st.spinner("Pesquisando produto: (Quério → Elígio) → 2 → (Dimetris + Oliveira + Norma)…"):
+            #     try:
+            #         base_results = run_asyncio(workflow_base_with_parallel_tail(user_input.strip()))
+            #         st.session_state["results"] = base_results
+            #         st.success("Fluxo concluído: Querio, Eligio, (Dimetris + Oliveira + Norma).")
+            #     except Exception as e:
+            #         st.error(f"Falha no fluxo: {e}")
 
+    # ---- Handlers dos analisadores
     if medison_btn:
-        run_uuid = st.session_state.get("last_run_uuid") or str(uuid.uuid4())
-        with st.spinner("Rodando medison_analyzer…"):
+        run_uuid = st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+        with st.spinner("Medison Analyzer - Pesquisando medicamento"):
             out = run_asyncio(run_medison_from_cache_stream(user_input.strip(), unique_key=run_uuid))
             if "error" in out:
                 st.error(out["error"])
             else:
-                st.success("medison_analyzer concluído.")
+                st.success("Medison Analyzer concluído.")
+                # tenta Xande se possível
+                out_x = run_asyncio(run_xande_from_cache_stream(user_input.strip(), unique_key=run_uuid))
+                if isinstance(out_x, dict) and "error" in out_x:
+                    print(f"[XANDE][TRY_AFTER_MEDISON] {out_x['error']}")
 
     if fraldete_btn:
-        with st.spinner("Rodando fraldete_analyzer…"):
+        with st.spinner("Fraldete Analyzer - Pesquisando fraldas"):
             out = run_asyncio(run_fraldete_from_cache_stream(user_input.strip()))
             if "error" in out:
                 st.error(out["error"])
             else:
-                st.success("fraldete_analyzer concluído.")
+                st.success("Fraldete Analyzer concluído.")
+                run_uuid = st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+                out_x = run_asyncio(run_xande_from_cache_stream(user_input.strip(), unique_key=run_uuid))
+                if isinstance(out_x, dict) and "error" in out_x:
+                    print(f"[XANDE][TRY_AFTER_FRALDETE] {out_x['error']}")
 
     if homer_btn:
-        with st.spinner("Rodando homer_analyzer…"):
+        with st.spinner("Homer Analyzer - Pesquisando cerveja"):
             out = run_asyncio(run_homer_from_cache_stream(user_input.strip()))
             if "error" in out:
                 st.error(out["error"])
             else:
-                st.success("homer_analyzer concluído.")
+                st.success("Homer Analyzer concluído.")
+                run_uuid = st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+                out_x = run_asyncio(run_xande_from_cache_stream(user_input.strip(), unique_key=run_uuid))
+                if isinstance(out_x, dict) and "error" in out_x:
+                    print(f"[XANDE][TRY_AFTER_HOMER] {out_x['error']}")
 
+    if xande_btn:
+        run_uuid = st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+        with st.spinner("Xande - Agregando resultados finais"):
+            out = run_asyncio(run_xande_from_cache_stream(user_input.strip(), unique_key=run_uuid))
+            if isinstance(out, dict) and "error" in out:
+                st.error(out["error"])
+            else:
+                st.success("Xande concluído.")
+
+    # ---- Snapshot
     if st.session_state.get("results"):
         st.subheader("📦 Snapshot completo (cache)")
         st.json(st.session_state["results"])
+
 
 if __name__ == "__main__":
     main()
