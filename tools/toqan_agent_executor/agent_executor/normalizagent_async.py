@@ -51,11 +51,11 @@ def _pick_auto_agent_from_taxo(taxo_parsed: Any) -> Optional[str]:
     if lbl.endswith("s"):
         lbl = lbl[:-1]
 
-    if lbl == "cerveja":
+    if "cerveja" in lbl:
         return "homer"
     if lbl in ("medicamento", "remedio"):
         return "medison"
-    if lbl == "fralda":
+    if "fralda" in lbl:
         return "fraldete"
 
     return None
@@ -153,26 +153,6 @@ def run_asyncio(task):
             return loop.run_until_complete(task)
         raise
 
-
-# =========================
-# Databricks – init (usa env ou st.secrets)
-# =========================
-class DatabricksWriter:
-    """
-    Placeholder de exemplo. No seu projeto real, use sua implementação.
-    """
-    def __init__(self):
-        self._enabled = True
-
-    def is_enabled(self) -> bool:
-        return self._enabled
-
-    def missing_vars(self):
-        return []
-
-    async def merge_rows(self, rows, batch_size=1):
-        # implemente conforme seu projeto
-        pass
 
 
 def _init_dbricks_writer():
@@ -516,23 +496,7 @@ async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
         # - Se bucket É um dos três => chama Xande após o analyzer correspondente (auto) finalizar
         # =========================
         try:
-            xande_should_run = False
-            bucket = _taxo_bucket(parsedT)
-
-            if bucket is None:
-                # categoria "outras": já temos Taxo/Norma/Dimetris prontos
-                xande_should_run = True
-            else:
-                # bucket específico; só dispara se o respectivo analyzer (auto) tiver terminado
-                if bucket == "homer" and ("homer_analyzer_auto" in results):
-                    xande_should_run = True
-                elif bucket == "medison" and ("medison_analyzer_auto" in results):
-                    xande_should_run = True
-                elif bucket == "fraldete" and ("fraldete_analyzer_auto" in results):
-                    xande_should_run = True
-
-            if xande_should_run:
-                await run_xande_from_cache_stream(user_input, unique_key=run_uuid)
+            await run_xande_from_cache_stream(user_input, unique_key=run_uuid)
         except Exception as e:
             print(f"[XANDE][AUTO] Falha ao executar: {e}")
 
@@ -724,43 +688,21 @@ async def run_medison_from_cache_stream(user_input: str, unique_key: Optional[st
 
 async def run_xande_from_cache_stream(user_input: str, unique_key: Optional[str] = None) -> Dict[str, Any]:
     """
-    Executa o agent Xande com TODO o payload coletado até aqui.
-    - Requer: Querio, Eligio, Dimetris, Oliveira (taxo) e Norma.
-    - Se categoria TAXO for 'homer'/'medison'/'fraldete', espera também o respectivo analyzer
-      caso ele tenha sido executado (auto ou manual).
+    Executa o agent Xande recebendo APENAS o EAN (user_input).
+    Não depende das respostas dos steps anteriores.
     """
     if not agent_xande_key:
         return {"error": "agent_xande_key não configurada."}
 
-    results = st.session_state.get("results", {})
-    required_keys = [
-        "querio_product_searcher",
-        "eligio_product_selector",
-        "dimetris_product_search_dimension",
-        "oliveira_analyzer",
-        "norma_analyzer",
-    ]
-    missing = [k for k in required_keys if k not in results]
-    if missing:
-        return {"error": f"Xande: payload incompleto. Faltando: {', '.join(missing)}"}
+    ean = (user_input or "").strip()
+    if not ean:
+        return {"error": "Xande: EAN vazio."}
 
-    which = _taxo_bucket(results.get("oliveira_analyzer"))
-    extra_missing = []
-    if which == "homer":
-        if not (("homer_analyzer" in results) or ("homer_analyzer_auto" in results)):
-            extra_missing.append("homer_analyzer")
-    elif which == "medison":
-        if not (("medison_analyzer" in results) or ("medison_analyzer_auto" in results)):
-            extra_missing.append("medison_analyzer")
-    elif which == "fraldete":
-        if not (("fraldete_analyzer" in results) or ("fraldete_analyzer_auto" in results)):
-            extra_missing.append("fraldete_analyzer")
-
-    if extra_missing:
-        return {"error": f"Xande: aguardando finalização de: {', '.join(extra_missing)}"}
-
-    payload = ensure_json_serializable(results)
+    # placeholder
     ph6x = st.session_state["placeholders"].setdefault("step6X", st.container())
+
+    # chamado apenas com o EAN
+    payload = f' Faça a análise completa do ean: {ean}. Não faça novas perguntas.'
 
     limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
     timeout = httpx.Timeout(30.0)
@@ -770,33 +712,66 @@ async def run_xande_from_cache_stream(user_input: str, unique_key: Optional[str]
         rawX, parsedX = await run_with_timeout_and_update(
             "xande_aggregator",
             "xande_aggregator",
-            user_input,
+            user_input,              # para logging/DB
             ph6x,
             start_or_continue_agent_async(payload, agent_xande_key, client),
             unique_key=run_uuid,
         )
 
+    # salva como antes
+    results = st.session_state.get("results", {})
     results["xande_aggregator_raw"] = rawX
     results["xande_aggregator"] = parsedX
     st.session_state["results"] = results
     return {"ok": True}
 
+async def run_xande_general_assessment(unique_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Executa o agent Xande passando APENAS a string 'Todos' (avaliação geral),
+    sem depender do EAN nem de steps anteriores.
+    """
+    if not agent_xande_key:
+        return {"error": "agent_xande_key não configurada."}
+
+    ph6g = st.session_state["placeholders"].setdefault("step6G", st.container())
+
+    limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+    timeout = httpx.Timeout(30.0)
+    run_uuid = unique_key or st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+
+    payload = "Todos"  # <- ponto central da mudança
+
+    async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
+        rawX, parsedX = await run_with_timeout_and_update(
+            "xande_aggregator (Avaliação Geral)",
+            "xande_aggregator",
+            "Todos",  # input_for_key para logging/DB
+            ph6g,
+            start_or_continue_agent_async(payload, agent_xande_key, client),
+            unique_key=run_uuid,
+        )
+
+    results = st.session_state.get("results", {})
+    results["xande_aggregator_general_raw"] = rawX
+    results["xande_aggregator_general"] = parsedX
+    st.session_state["results"] = results
+    return {"ok": True}
 
 # =========================
 # Streamlit UI
 # =========================
 def main():
-    st.set_page_config(page_title="iPadronizAI", page_icon="🤖", layout="wide")
-    st.title("iFood - iPadronizAI")
+    st.set_page_config(page_title="iPadroniza", page_icon="🤖", layout="wide")
+    st.title("iFood - iPadroniza")
 
     if not dbricks.is_enabled():
         if dbricks.missing_vars():
             st.warning(f"Databricks não configurado. Faltando: {', '.join(dbricks.missing_vars())}")
 
-    user_input = st.text_area("Ean do produto para ser pesquisado", "", key="txt_user_input")
+    user_input = st.text_area("Ean do produto", "", key="txt_user_input")
 
     # ---- Botões (linha principal) – agora com Xande
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         run_base_btn = st.button("Pesquisar Produto", key="btn_run_base")
 
@@ -810,7 +785,8 @@ def main():
         homer_btn = st.button("Homer", key="btn_homer", disabled=analyzers_disabled)
     with c5:
         xande_btn = st.button("Xande", key="btn_xande", disabled=False)  # sempre habilitado
-
+    with c6:
+        geral_btn = st.button("Avaliação Geral", key="btn_xande_geral", disabled=False)
     # ---- Linha 2: Reset/Limpeza ----
     c6, c7, c8 = st.columns(3)
     with c6:
@@ -905,6 +881,14 @@ def main():
                 st.error(out["error"])
             else:
                 st.success("Xande concluído.")
+    if geral_btn:
+        run_uuid = st.session_state.get("last_product_uuid") or str(uuid.uuid4())
+        with st.spinner("Xande - Avaliação Geral (Todos)"):
+            out = run_asyncio(run_xande_general_assessment(unique_key=run_uuid))
+            if isinstance(out, dict) and "error" in out:
+                st.error(out["error"])
+            else:
+                st.success("Avaliação Geral concluída.")
 
     # ---- Snapshot
     if st.session_state.get("results"):
