@@ -81,11 +81,12 @@ def _taxo_bucket(taxo_parsed: Any) -> Optional[str]:
     return None
 
 
-def _get_ph(name: str) -> st.delta_generator.DeltaGenerator:
-    phs = st.session_state.setdefault("placeholders", {})
-    if name not in phs or phs[name] is None:
-        phs[name] = st.container()
-    return phs[name]
+def _get_ph(name: str, scope: str = "global") -> st.delta_generator.DeltaGenerator:
+    all_scopes = st.session_state.setdefault("placeholders", {})
+    scope_dict = all_scopes.setdefault(scope, {})
+    if name not in scope_dict or scope_dict[name] is None:
+        scope_dict[name] = st.container()
+    return scope_dict[name]
 
 
 def clean_code_fence(s: str) -> str:
@@ -341,164 +342,166 @@ async def run_with_timeout_and_update(
 # =========================
 # Fluxos
 # =========================
-async def workflow_base_with_parallel_tail(user_input: str) -> Dict[str, Any]:
+async def workflow_base_with_parallel_tail(user_input: str, scope: Optional[str] = None) -> Dict[str, Any]:
     results: Dict[str, Any] = {}
     limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
     timeout = httpx.Timeout(30.0)
+
+    # escopo visual (por EAN); fallback para o próprio user_input
+    scope = scope or (user_input.strip() or "global")
 
     run_uuid = st.session_state.get("last_product_uuid")
     if not run_uuid:
         run_uuid = str(uuid.uuid4())
     st.session_state["last_product_uuid"] = run_uuid
 
-    # Placeholders
-    ph1  = _get_ph("step1")   # querio
-    ph2  = _get_ph("step2")   # eligio
-    ph3  = _get_ph("step3")   # dimetris
-    ph5t = _get_ph("step5T")  # taxo
-    ph5n = _get_ph("step5N")  # norma
-    # autos
-    ph5h = _get_ph("step5H")  # homer (auto)
-    ph5m = _get_ph("step5M")  # medison (auto)
-    ph5f = _get_ph("step5F")  # fraldete (auto)
-    # xande
-    ph6x = _get_ph("step6X")  # xande (final)
+    # Um container “pai” por EAN, para deixar organizado
+    with st.expander(f"🔎 EAN: {scope}", expanded=True):
+        # Placeholders namespaced
+        ph1  = _get_ph("step1", scope)   # querio
+        ph2  = _get_ph("step2", scope)   # eligio
+        ph3  = _get_ph("step3", scope)   # dimetris
+        ph5t = _get_ph("step5T", scope)  # taxo
+        ph5n = _get_ph("step5N", scope)  # norma
+        # autos
+        ph5h = _get_ph("step5H", scope)  # homer (auto)
+        ph5m = _get_ph("step5M", scope)  # medison (auto)
+        ph5f = _get_ph("step5F", scope)  # fraldete (auto)
+        # xande
+        ph6x = _get_ph("step6X", scope)  # xande (final)
 
-    async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
-        # 1) querio
-        raw1, parsed1 = await run_with_timeout_and_update(
-            "querio_product_searcher",
-            "querio_product_searcher",
-            user_input,
-            ph1,
-            start_or_continue_agent_async(user_input, agent_product_searcher_key, client),
-            unique_key=run_uuid,
-        )
-        results["querio_product_searcher_raw"] = raw1
-        results["querio_product_searcher"] = parsed1
-
-        # 2) eligio
-        step2_input = ensure_json_serializable(parsed1)
-        raw2, parsed2 = await run_with_timeout_and_update(
-            "eligio_product_selector",
-            "eligio_product_selector",
-            user_input,
-            ph2,
-            start_or_continue_agent_async(step2_input, agent_product_select_key, client),
-            unique_key=run_uuid,
-        )
-        results["eligio_product_selector_raw"] = raw2
-        results["eligio_product_selector"] = parsed2
-
-        # 3) paralelos: dimetris + taxo + norma
-        step3_input = ensure_json_serializable(parsed2)
-
-        dimetris_task = asyncio.create_task(
-            run_with_timeout_and_update(
-                "dimetris_product_search_dimension",
-                "dimetris_product_search_dimension",
+        async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
+            # 1) querio
+            raw1, parsed1 = await run_with_timeout_and_update(
+                "querio_product_searcher",
+                "querio_product_searcher",
                 user_input,
-                ph3,
-                start_or_continue_agent_async(step3_input, agent_product_dimetris_dimension_key, client),
+                ph1,
+                start_or_continue_agent_async(user_input, agent_product_searcher_key, client),
                 unique_key=run_uuid,
             )
-        )
-        taxo_task = asyncio.create_task(
-            run_with_timeout_and_update(
-                "oliveira_analyzer",
-                "oliveira_analyzer",
+            results["querio_product_searcher_raw"] = raw1
+            results["querio_product_searcher"] = parsed1
+
+            # 2) eligio
+            step2_input = ensure_json_serializable(parsed1)
+            raw2, parsed2 = await run_with_timeout_and_update(
+                "eligio_product_selector",
+                "eligio_product_selector",
                 user_input,
-                ph5t,
-                start_or_continue_agent_async({"eligio_product_selector": parsed2}, agent_taxo_key, client),
+                ph2,
+                start_or_continue_agent_async(step2_input, agent_product_select_key, client),
                 unique_key=run_uuid,
             )
-        )
-        norma_task = asyncio.create_task(
-            run_with_timeout_and_update(
-                "norma_analyzer",
-                "norma_analyzer",
-                user_input,
-                ph5n,
-                start_or_continue_agent_async({"eligio_product_selector": parsed2}, agent_norma_key, client),
-                unique_key=run_uuid,
-            )
-        )
+            results["eligio_product_selector_raw"] = raw2
+            results["eligio_product_selector"] = parsed2
 
-        # Espera o TAXO para decidir disparo automático
-        rawT, parsedT = await taxo_task
-        results["oliveira_analyzer_raw"] = rawT
-        results["oliveira_analyzer"] = parsedT
+            # 3) paralelos: dimetris + taxo + norma
+            step3_input = ensure_json_serializable(parsed2)
 
-        which = _pick_auto_agent_from_taxo(parsedT)  # cerveja/medicamento/remédio/fraldas
-        auto_task = None
-        if which == "homer" and agent_homer_key:
-            payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
-            auto_task = asyncio.create_task(
+            dimetris_task = asyncio.create_task(
                 run_with_timeout_and_update(
-                    "homer_analyzer (auto)",
-                    "homer_analyzer",
+                    "dimetris_product_search_dimension",
+                    "dimetris_product_search_dimension",
                     user_input,
-                    ph5h,
-                    start_or_continue_agent_async(ensure_json_serializable(payload), agent_homer_key, client),
+                    ph3,
+                    start_or_continue_agent_async(step3_input, agent_product_dimetris_dimension_key, client),
                     unique_key=run_uuid,
                 )
             )
-        elif which == "medison" and agent_medison_key:
-            payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
-            auto_task = asyncio.create_task(
+            taxo_task = asyncio.create_task(
                 run_with_timeout_and_update(
-                    "medison_analyzer (auto)",
-                    "medison_analyzer",
+                    "oliveira_analyzer",
+                    "oliveira_analyzer",
                     user_input,
-                    ph5m,
-                    start_or_continue_agent_async(ensure_json_serializable(payload), agent_medison_key, client),
+                    ph5t,
+                    start_or_continue_agent_async({"eligio_product_selector": parsed2}, agent_taxo_key, client),
                     unique_key=run_uuid,
                 )
             )
-        elif which == "fraldete" and agent_fraldete_key:
-            payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
-            auto_task = asyncio.create_task(
+            norma_task = asyncio.create_task(
                 run_with_timeout_and_update(
-                    "fraldete_analyzer (auto)",
-                    "fraldete_analyzer",
+                    "norma_analyzer",
+                    "norma_analyzer",
                     user_input,
-                    ph5f,
-                    start_or_continue_agent_async(ensure_json_serializable(payload), agent_fraldete_key, client),
+                    ph5n,
+                    start_or_continue_agent_async({"eligio_product_selector": parsed2}, agent_norma_key, client),
                     unique_key=run_uuid,
                 )
             )
 
-        # Aguarda os outros paralelos
-        raw3, parsed3 = await dimetris_task
-        results["dimetris_product_search_dimension_raw"] = raw3
-        results["dimetris_product_search_dimension"] = parsed3
+            # Espera o TAXO para decidir disparo automático
+            rawT, parsedT = await taxo_task
+            results["oliveira_analyzer_raw"] = rawT
+            results["oliveira_analyzer"] = parsedT
 
-        rawN, parsedN = await norma_task
-        results["norma_analyzer_raw"] = rawN
-        results["norma_analyzer"] = parsedN
+            which = _pick_auto_agent_from_taxo(parsedT)  # cerveja/medicamento/remédio/fraldas
+            auto_task = None
+            if which == "homer" and agent_homer_key:
+                payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
+                auto_task = asyncio.create_task(
+                    run_with_timeout_and_update(
+                        "homer_analyzer (auto)",
+                        "homer_analyzer",
+                        user_input,
+                        ph5h,
+                        start_or_continue_agent_async(ensure_json_serializable(payload), agent_homer_key, client),
+                        unique_key=run_uuid,
+                    )
+                )
+            elif which == "medison" and agent_medison_key:
+                payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
+                auto_task = asyncio.create_task(
+                    run_with_timeout_and_update(
+                        "medison_analyzer (auto)",
+                        "medison_analyzer",
+                        user_input,
+                        ph5m,
+                        start_or_continue_agent_async(ensure_json_serializable(payload), agent_medison_key, client),
+                        unique_key=run_uuid,
+                    )
+                )
+            elif which == "fraldete" and agent_fraldete_key:
+                payload = {"eligio_product_selector": parsed2, "oliveira_analyzer": parsedT}
+                auto_task = asyncio.create_task(
+                    run_with_timeout_and_update(
+                        "fraldete_analyzer (auto)",
+                        "fraldete_analyzer",
+                        user_input,
+                        ph5f,
+                        start_or_continue_agent_async(ensure_json_serializable(payload), agent_fraldete_key, client),
+                        unique_key=run_uuid,
+                    )
+                )
 
-        if auto_task:
-            rawA, parsedA = await auto_task
-            if which == "homer":
-                results["homer_analyzer_raw_auto"] = rawA
-                results["homer_analyzer_auto"] = parsedA
-            elif which == "medison":
-                results["medison_analyzer_raw_auto"] = rawA
-                results["medison_analyzer_auto"] = parsedA
-            elif which == "fraldete":
-                results["fraldete_analyzer_raw_auto"] = rawA
-                results["fraldete_analyzer_auto"] = parsedA
+            # Aguarda os outros paralelos
+            raw3, parsed3 = await dimetris_task
+            results["dimetris_product_search_dimension_raw"] = raw3
+            results["dimetris_product_search_dimension"] = parsed3
 
-        # =========================
-        # Auto-chamada do Xande
-        # Regras:
-        # - Se bucket NÃO é fralda/cerveja/medicamento => chama Xande agora (temos Taxo/Norma/Dimetris prontos)
-        # - Se bucket É um dos três => chama Xande após o analyzer correspondente (auto) finalizar
-        # =========================
-        try:
-            await run_xande_from_cache_stream(user_input, unique_key=run_uuid)
-        except Exception as e:
-            print(f"[XANDE][AUTO] Falha ao executar: {e}")
+            rawN, parsedN = await norma_task
+            results["norma_analyzer_raw"] = rawN
+            results["norma_analyzer"] = parsedN
+
+            if auto_task:
+                rawA, parsedA = await auto_task
+                if which == "homer":
+                    results["homer_analyzer_raw_auto"] = rawA
+                    results["homer_analyzer_auto"] = parsedA
+                elif which == "medison":
+                    results["medison_analyzer_raw_auto"] = rawA
+                    results["medison_analyzer_auto"] = parsedA
+                elif which == "fraldete":
+                    results["fraldete_analyzer_raw_auto"] = rawA
+                    results["fraldete_analyzer_auto"] = parsedA
+
+            # Xande automático (idêntico às suas regras)
+            try:
+                # para manter o mesmo container do EAN:
+                # reusa o run_xande_from_cache_stream mas sem sobrescrever scope global
+                await run_xande_from_cache_stream(user_input, unique_key=run_uuid)
+            except Exception as e:
+                print(f"[XANDE][AUTO] Falha ao executar: {e}")
 
     return results
 
@@ -757,6 +760,37 @@ async def run_xande_general_assessment(unique_key: Optional[str] = None) -> Dict
     st.session_state["results"] = results
     return {"ok": True}
 
+async def _run_one_ean(ean: str, sem: asyncio.Semaphore) -> Tuple[str, Dict[str, Any]]:
+    """
+    Executa o workflow completo para 1 EAN respeitando o semáforo (até 10 concorrentes).
+    O 'scope' é o próprio EAN (para namespacing de UI).
+    """
+    ean = (ean or "").strip()
+    if not ean:
+        return ean, {"error": "EAN vazio"}
+    async with sem:
+        res = await workflow_base_with_parallel_tail(ean, scope=ean)
+        return ean, res
+
+
+def _parse_eans(raw: str) -> list[str]:
+    """
+    Converte a string do textarea (vírgula, quebra de linha ou espaço) numa lista de EANs.
+    """
+    if not raw:
+        return []
+    # aceita vírgula, quebra de linha e ponto-e-vírgula
+    parts = re.split(r"[,\n;]+", raw)
+    eans = [p.strip() for p in parts if p.strip()]
+    # remove duplicatas mantendo ordem
+    seen = set()
+    unique = []
+    for e in eans:
+        if e not in seen:
+            seen.add(e)
+            unique.append(e)
+    return unique
+
 # =========================
 # Streamlit UI
 # =========================
@@ -813,27 +847,42 @@ def main():
         st.success("Placeholders limpos.")
 
     # ---- Execução do fluxo base
+    # ---- Execução do fluxo base
     if run_base_btn:
-        if not user_input.strip():
-            st.warning("Informe o código de barras do produto")
+        raw = user_input.strip()
+        if not raw:
+            st.warning("Informe o(s) código(s) de barras do produto (separe por vírgula ou quebra de linha).")
         else:
-            try:
-                base_results = run_asyncio(workflow_base_with_parallel_tail(user_input.strip()))
-                st.session_state["results"] = base_results
-                st.session_state["agents_enabled"] = True
-                st.success("Fluxo concluído.")
-            except Exception as e:
-                st.session_state["agents_enabled"] = False
-                st.error(f"Falha no fluxo: {e}")
+            eans = _parse_eans(raw)
+            if not eans:
+                st.warning("Nenhum EAN válido encontrado.")
+            else:
+                try:
+                    if len(eans) == 1:
+                        # Caso 1 EAN – mantém exatamente o fluxo anterior
+                        base_results = run_asyncio(workflow_base_with_parallel_tail(eans[0], scope=eans[0]))
+                        st.session_state["results"] = base_results
+                        st.session_state["agents_enabled"] = True
+                        st.success("Fluxo concluído.")
+                    else:
+                        # Caso múltiplos EANs – executa em paralelo com limite de 10 concorrentes
+                        async def _run_many(ean_list: list[str]) -> Dict[str, Any]:
+                            sem = asyncio.Semaphore(10)  # <= limite de concorrência
+                            tasks = [asyncio.create_task(_run_one_ean(e, sem)) for e in ean_list]
+                            out_pairs = await asyncio.gather(*tasks, return_exceptions=False)
+                            # monta um dicionário: {ean: resultados}
+                            return {k: v for (k, v) in out_pairs}
 
-            # (Se quiser manter o spinner adicional do seu script original, descomente)
-            # with st.spinner("Pesquisando produto: (Quério → Elígio) → 2 → (Dimetris + Oliveira + Norma)…"):
-            #     try:
-            #         base_results = run_asyncio(workflow_base_with_parallel_tail(user_input.strip()))
-            #         st.session_state["results"] = base_results
-            #         st.success("Fluxo concluído: Querio, Eligio, (Dimetris + Oliveira + Norma).")
-            #     except Exception as e:
-            #         st.error(f"Falha no fluxo: {e}")
+                        with st.spinner(f"Processando {len(eans)} EANs em paralelo (até 10 simultâneos)…"):
+                            all_results = run_asyncio(_run_many(eans))
+
+                        # salva um snapshot geral (mantém também o comportamento anterior para 'results')
+                        st.session_state["results"] = all_results
+                        st.session_state["agents_enabled"] = True
+                        st.success("Fluxo concluído para todos os EANs.")
+                except Exception as e:
+                    st.session_state["agents_enabled"] = False
+                    st.error(f"Falha no fluxo: {e}")
 
     # ---- Handlers dos analisadores
     if medison_btn:
@@ -893,7 +942,13 @@ def main():
     # ---- Snapshot
     if st.session_state.get("results"):
         st.subheader("📦 Snapshot completo (cache)")
-        st.json(st.session_state["results"])
+        res = st.session_state["results"]
+        if isinstance(res, dict) and all(isinstance(v, dict) for v in res.values()):
+            for ean, payload in res.items():
+                with st.expander(f"📦 EAN {ean}", expanded=False):
+                    st.json(payload)
+        else:
+            st.json(res)
 
 
 if __name__ == "__main__":
